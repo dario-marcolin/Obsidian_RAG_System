@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Local vault / test data
+Test_Md_Docs/
+
+# Generated indices and caches
+chroma_db/
+chroma_db_test_backup/
+chunks_cache.pkl
+chunks_cache_test_backup.pkl
+
+# Local system state
+checkpoints.sqlite
+sync_state.json
+.gradio/
+
+# OS
+.DS_Store
