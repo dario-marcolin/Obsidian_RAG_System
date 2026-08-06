@@ -11,6 +11,7 @@ A Retrieval-Augmented Generation system for querying an Obsidian vault in natura
 - **Incremental sync**: `sync_vault.py` re-indexes only new/modified/deleted files instead of rebuilding the whole index.
 - **Two frontends**: a Gradio debug UI and a FastAPI backend (for the Obsidian plugin / external clients).
 - **Protected mode**: an optional per-request flag excludes private folders (e.g. a personal journal) from the retrieved context.
+- **Current note as primary context**: when the plugin's toggle is on, the note open in Obsidian is sent with the request and becomes the primary context section, ahead of everything retrieval finds; the normal retrieval modes still run and provide supporting context. The note is sent as text, so notes that were just edited or never indexed work too.
 
 ## Architecture
 
@@ -27,7 +28,7 @@ app_gradio.py   local debug UI
 app_fastapi.py  HTTP backend (used by the Obsidian plugin)
 ```
 
-Query flow: contextualize (resolve references from chat history) → classify (topic vs. date) → retrieve (hybrid search or date filter) → expand via wikilink graph → rerank/dedupe → format context → generate answer (Claude) → update memory.
+Query flow: contextualize (resolve references from chat history) → prepare current note (if the plugin sent one) → classify (topic vs. date) → retrieve (hybrid search or date filter) → expand via wikilink graph → rerank/dedupe → format context (current note first, retrieved chunks as support) → generate answer (Claude) → update memory.
 
 ## Prerequisites
 

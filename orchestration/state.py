@@ -32,6 +32,29 @@ class RAGState(TypedDict):
     # pass it, e.g. the CLI loop in pipeline.py.
     modalita_protetta: NotRequired[bool]
 
+    # --- Current note (open page as primary context) ---
+    # The note open in Obsidian when the question was asked, sent by the plugin
+    # as {"nome": str, "path": str, "contenuto": str} when its toggle is on;
+    # None/absent when it's off or no markdown file is open.
+    #
+    # It carries the note's full TEXT rather than a name to look up: the whole
+    # point is the page as it is on screen right now, which for a note being
+    # actively written is not what ChromaDB holds (or holds nothing at all, if
+    # it was never synced). So this bypasses retrieval entirely.
+    #
+    # Per-invocation like modalita_protetta, and for the same reason: it
+    # reflects the toggle (and the open file) at the moment the question is
+    # asked, so it's set fresh every turn and never persisted in the
+    # checkpointer. Two turns in one thread can legitimately have different
+    # open notes.
+    nota_corrente: NotRequired[dict | None]
+
+    # Set by the nota_corrente node: the note's text after the protected-mode
+    # check and the length cap, ready for formatta_contesto. Empty string when
+    # there's no usable current note, which is what the formatting node keys on.
+    testo_nota_corrente: NotRequired[str]
+    nome_nota_corrente: NotRequired[str]
+
     # --- Classification (query.classifier) ---
     tipo: NotRequired[str]  # "CONTENUTISTICA" or "TEMPORALE"
     data_inizio: NotRequired[str | None]
@@ -64,19 +87,25 @@ class RAGState(TypedDict):
     stop_reason: NotRequired[str]
 
 
-def stato_iniziale(query: str, modalita_protetta: bool = False) -> RAGState:
+def stato_iniziale(
+    query: str,
+    modalita_protetta: bool = False,
+    nota_corrente: dict | None = None,
+) -> RAGState:
     """Builds the starting state for a new graph invocation. chat_history
     isn't force-reset here: if the graph runs with a checkpointer and the
     same thread_id, LangGraph restores it from the prior turn — this
     default only applies to a thread's first turn.
 
-    modalita_protetta is per-invocation, not per-thread (it reflects the
-    plugin toggle at the moment the question is asked), so it's set fresh
-    every turn and isn't persisted like chat_history.
+    modalita_protetta and nota_corrente are per-invocation, not per-thread
+    (they reflect the plugin toggles, and the open file, at the moment the
+    question is asked), so they're set fresh every turn and aren't persisted
+    like chat_history.
     """
     return {
         "query_originale": query,
         "chat_history": [],
         "retry_count": 0,
         "modalita_protetta": modalita_protetta,
+        "nota_corrente": nota_corrente,
     }

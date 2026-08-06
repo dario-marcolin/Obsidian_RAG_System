@@ -103,6 +103,14 @@ SOGLIA_FREQUENZA_TEMPORALE = 2
 MAX_CHUNK_CONTESTO = 20      # cap on chunks (after rerank) passed to grading/generation
 GRADING_EXTRACT_CHARS = 150  # excerpt length per chunk in the grading context
 
+# --- Current note (open page as primary context) ------------------------------
+# The plugin sends the open note's full text, not chunks: it's a single note the
+# user is looking at right now, so it enters the context whole (no retrieval, no
+# splitting) and unindexed/just-edited notes work too. This cap only guards
+# against one pathological note eating the whole prompt; it's generous because
+# the note is the primary source and truncating it defeats the purpose.
+MAX_CARATTERI_NOTA_CORRENTE = 20000
+
 # --- Default time window per mentioned time unit -----------------------------
 # When data_inizio is missing, the applied window depends on the time unit
 # actually mentioned in the query (days/week/month/year).

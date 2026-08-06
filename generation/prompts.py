@@ -45,12 +45,47 @@ def formatta_contesto_sintetico(chunks_o_risultati, is_get_result=False, n_carat
     return "\n".join(righe)
 
 
-def costruisci_system_prompt(tipo: str) -> str:
+# Headers separating the two context sections when a current note is present.
+# Exported (not inlined) because the formatting node builds the context and the
+# system prompt refers to these sections by name — they must stay in sync.
+INTESTAZIONE_NOTA_CORRENTE = "=== NOTA ATTUALMENTE APERTA — FONTE PRIMARIA ==="
+INTESTAZIONE_ALTRE_NOTE = "=== ALTRE NOTE DAL VAULT — CONTESTO DI SUPPORTO ==="
+
+
+def formatta_contesto_con_nota_corrente(nome_nota: str, testo_nota: str, contesto_recuperato: str) -> str:
+    """Assembles the two-section context used when the user has a note open.
+
+    The open note goes first, whole and under an explicit header, and the
+    retrieved chunks follow as support. Two reasons for the split rather than
+    just putting the note's chunks at the top of one flat list: the note is not
+    retrieved (it's raw text straight from the editor, so it has no chunks to
+    interleave), and position alone doesn't tell the model that one source
+    outranks the others — the header does, and the system prompt refers to it.
+    """
+    blocchi = [
+        f"{INTESTAZIONE_NOTA_CORRENTE}\n[[{nome_nota}]]\n{testo_nota}",
+    ]
+    # An open note with no retrieval hits is normal (a brand-new note nothing
+    # links to). Emitting an empty "support" section would just invite the
+    # model to comment on the emptiness, so skip the header entirely.
+    if contesto_recuperato:
+        blocchi.append(f"{INTESTAZIONE_ALTRE_NOTE}\n{contesto_recuperato}")
+
+    return "\n\n".join(blocchi)
+
+
+def costruisci_system_prompt(tipo: str, ha_nota_corrente: bool = False) -> str:
     """System instructions (persona + rules), kept separate from the content
     (context + question) via the API's 'system' field so the language
-    instruction isn't overridden by the dominant language of the content."""
+    instruction isn't overridden by the dominant language of the content.
+
+    ha_nota_corrente adds the precedence rule for the open note. It's appended
+    to both branches rather than duplicated inside each: the rule is about
+    which source wins, which is orthogonal to whether the task is answering a
+    question or summarizing a period.
+    """
     if tipo == "CONTENUTISTICA":
-        return """Sei un assistente che risponde a domande usando ESCLUSIVAMENTE le note fornite come contesto.
+        base = """Sei un assistente che risponde a domande usando ESCLUSIVAMENTE le note fornite come contesto.
 Le note possono essere scritte in italiano, inglese, o entrambi.
 Rispondi SEMPRE nella stessa lingua in cui è formulata la domanda dell'utente, indipendentemente dalla lingua del contesto —
 riformulando liberamente i concetti con parole tue, NON traducendo letteralmente frase per frase, spiegando il concetto come lo spiegheresti a voce.
@@ -58,10 +93,27 @@ Se il contesto non contiene informazioni sufficienti, dillo esplicitamente invec
 Cita sempre le note di origine usando la sintassi [[nome nota]] già presente nel contesto."""
 
     else:  # TEMPORALE
-        return """Sei un assistente che crea riassunti a partire da note personali datate.
+        base = """Sei un assistente che crea riassunti a partire da note personali datate.
 Il contesto contiene tutte le note del periodo richiesto. Fai una sintesi organizzata (per temi o cronologicamente),
 citando le note di origine con [[nome nota]].
 Rispondi SEMPRE nella stessa lingua in cui è formulata la richiesta dell'utente, indipendentemente dalla lingua del contesto."""
+
+    if not ha_nota_corrente:
+        return base
+
+    return (
+        base
+        + f"""
+
+L'utente ha una nota aperta davanti a sé in questo momento, riportata nel contesto sotto
+l'intestazione "{INTESTAZIONE_NOTA_CORRENTE}".
+Trattala come la FONTE PRIMARIA: la domanda parte quasi sempre da lì, quindi ancora la risposta
+al suo contenuto e dalle la precedenza se contraddice le altre note (è la versione più aggiornata,
+anche rispetto a quanto risulta altrove nel vault).
+Le note sotto "{INTESTAZIONE_ALTRE_NOTE}" servono ad
+arricchire, completare e collegare: usale, ma come supporto, non come punto di partenza.
+Se la domanda non c'entra nulla con la nota aperta, ignorala e rispondi normalmente dalle altre note."""
+    )
 
 
 def costruisci_prompt(query: str, contesto: str, tipo: str) -> str:

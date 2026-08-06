@@ -41,6 +41,15 @@ def _stampa_debug_nodo(nome_nodo, valori):
     if "query_effettiva" in valori:
         print(f"[DEBUG] query_effettiva: {valori['query_effettiva']!r}")
 
+    if "testo_nota_corrente" in valori:
+        if valori["testo_nota_corrente"]:
+            print(
+                f"[DEBUG] nota_corrente: {valori['nome_nota_corrente']!r} | "
+                f"{len(valori['testo_nota_corrente'])} caratteri (fonte primaria)"
+            )
+        else:
+            print("[DEBUG] nota_corrente: nessuna (toggle spento, nota vuota o cartella protetta)")
+
     if "tipo" in valori:
         print(
             f"[DEBUG] tipo: {valori['tipo']} | "
@@ -69,12 +78,25 @@ def _stampa_debug_nodo(nome_nodo, valori):
         print(f"[DEBUG] chat_history: +{len(valori['chat_history'])} messaggi accodati")
 
 
-def rispondi(query, grafo_compilato, thread_id, modalita_protetta=False, debug=None):
-    """Runs the compiled graph for one query and returns (risposta, stop_reason).
+def rispondi(query, grafo_compilato, thread_id, modalita_protetta=False, nota_corrente=None, debug=None):
+    """Runs the compiled graph for one query and returns
+    (risposta, stop_reason, nota_corrente_usata).
+
+    nota_corrente_usata reports whether the note the caller sent actually
+    reached the context. It can be False even when nota_corrente was sent
+    (protected folder, empty note), and only the graph knows which — the
+    plugin can't tell, since CARTELLE_PROTETTE is backend config. Without
+    this the rejection would be a silent no-op for the user.
 
     modalita_protetta (demo mode): when True, the rerank node drops chunks
     from private folders (CARTELLE_PROTETTE). Per-invocation flag set by
     the caller (the /chat endpoint reads it from the plugin request body).
+
+    nota_corrente: the note open in Obsidian when the question was asked,
+    as {"nome", "path", "contenuto"}, or None. When present it becomes the
+    primary context section, ahead of anything retrieval finds. Also
+    per-invocation, and also read from the plugin request body — the CLI
+    loop below never sends one (there's no open editor to speak of).
 
     debug=None uses settings.DEBUG_GRAFO; pass True/False to override it
     for this call.
@@ -86,8 +108,10 @@ def rispondi(query, grafo_compilato, thread_id, modalita_protetta=False, debug=N
 
     risposta = None
     stop_reason = None
+    nota_corrente_usata = False
 
-    for aggiornamento in grafo_compilato.stream(stato_iniziale(query, modalita_protetta), config, stream_mode="updates"):
+    stato = stato_iniziale(query, modalita_protetta, nota_corrente)
+    for aggiornamento in grafo_compilato.stream(stato, config, stream_mode="updates"):
         # aggiornamento is {"node_name": {fields_written_by_that_node}}
         for nome_nodo, valori in aggiornamento.items():
             if debug:
@@ -96,8 +120,10 @@ def rispondi(query, grafo_compilato, thread_id, modalita_protetta=False, debug=N
                 risposta = valori["risposta"]
             if "stop_reason" in valori:
                 stop_reason = valori["stop_reason"]
+            if "testo_nota_corrente" in valori:
+                nota_corrente_usata = bool(valori["testo_nota_corrente"])
 
-    return risposta, stop_reason
+    return risposta, stop_reason, nota_corrente_usata
 
 
 if __name__ == "__main__":
@@ -112,6 +138,8 @@ if __name__ == "__main__":
         domanda = input("DOMANDA: ").strip()
         if domanda.lower() in ("exit", "quit", ""):
             break
-        risposta, stop_reason = rispondi(domanda, grafo_compilato, thread_id)
+        # The CLI has no open editor, so no nota_corrente is ever sent and the
+        # flag is always False here — unpacked and ignored.
+        risposta, stop_reason, _ = rispondi(domanda, grafo_compilato, thread_id)
         print(f"\nRISPOSTA:\n{risposta}\n")
         print("-" * 60)

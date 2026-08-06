@@ -7,8 +7,10 @@ import anthropic
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 
-def genera_risposta_claude(query: str, contesto: str, tipo: str) -> tuple[str, str]:
-    system_prompt = costruisci_system_prompt(tipo)
+def genera_risposta_claude(
+    query: str, contesto: str, tipo: str, ha_nota_corrente: bool = False
+) -> tuple[str, str]:
+    system_prompt = costruisci_system_prompt(tipo, ha_nota_corrente)
     prompt = costruisci_prompt(query, contesto, tipo)
     response = client.messages.create(
         model=ANTHROPIC_GENERATION_MODEL,

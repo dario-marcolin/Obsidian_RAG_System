@@ -21,7 +21,10 @@ def chiedi(domanda, thread_id):
     if thread_id is None:
         thread_id = str(uuid.uuid4())
 
-    risposta, stop_reason = rispondi(domanda, grafo_compilato, thread_id)
+    # The Gradio debug UI is not the Obsidian plugin: there's no open editor to
+    # take a current note from, so the third return value (nota_corrente_usata)
+    # is always False here and is ignored.
+    risposta, stop_reason, _ = rispondi(domanda, grafo_compilato, thread_id)
 
     avviso = "⚠️ Risposta troncata (max_tokens raggiunto)" if stop_reason == "max_tokens" else f"✅ Completata normalmente ({stop_reason})"
 

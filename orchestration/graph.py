@@ -16,6 +16,7 @@ from settings import CHECKPOINTS_DB_PATH
 from .state import RAGState
 from .nodes import (
     crea_nodo_contestualizzazione,
+    crea_nodo_nota_corrente,
     crea_nodo_classificazione,
     crea_nodo_retrieve_ibrido,
     crea_nodo_recupera_temporale,
@@ -48,6 +49,11 @@ def costruisci_grafo(ensemble_retriever, vectorstore, grafo_note, mappa_source):
     builder = StateGraph(RAGState)
 
     builder.add_node("contestualizza_query", crea_nodo_contestualizzazione())
+    # Placed before classification, on the single trunk both retrieval branches
+    # start from, so the current note reaches the context whatever the query
+    # type — and so rerank_chunk (which drops the note's stale indexed chunks)
+    # can rely on nome_nota_corrente already being set on either branch.
+    builder.add_node("prepara_nota_corrente", crea_nodo_nota_corrente())
     builder.add_node("classifica_query", crea_nodo_classificazione())
     builder.add_node(
         "retrieve_ibrido",
@@ -63,7 +69,8 @@ def costruisci_grafo(ensemble_retriever, vectorstore, grafo_note, mappa_source):
     builder.add_node("aggiorna_memoria", crea_nodo_aggiorna_memoria())
 
     builder.add_edge(START, "contestualizza_query")
-    builder.add_edge("contestualizza_query", "classifica_query")
+    builder.add_edge("contestualizza_query", "prepara_nota_corrente")
+    builder.add_edge("prepara_nota_corrente", "classifica_query")
 
     # Both retrieval branches converge on the same rerank node
     builder.add_edge("retrieve_ibrido", "rerank_chunk")

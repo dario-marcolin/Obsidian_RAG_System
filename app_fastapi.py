@@ -74,17 +74,41 @@ app.add_middleware(
 # Request/response schemas
 # ---------------------------------------------------------------------
 
+class NotaCorrente(BaseModel):
+    """The note open in Obsidian when the question was asked.
+
+    Carries the note's text, not just a name to look up: the plugin reads it
+    straight from the vault, so it's the version on screen right now — which
+    for a note being actively written is neither what ChromaDB holds nor,
+    for a never-synced note, anything at all.
+
+    path is vault-relative ("💭Riflessioni/09-07-26.md"); the graph derives
+    the folder from it to apply protected mode to the open note too.
+    """
+    nome: str
+    path: str
+    contenuto: str
+
+
 class ChatRequest(BaseModel):
     query: str
     thread_id: str | None = None  # None on the first message of a new conversation
     # Demo mode: when True, excludes private folders (CARTELLE_PROTETTE) from context.
     modalita_protetta: bool = False
+    # None when the plugin's "current note" toggle is off, or no markdown file
+    # is open. When present, becomes the primary context section.
+    nota_corrente: NotaCorrente | None = None
 
 
 class ChatResponse(BaseModel):
     risposta: str
     stop_reason: str | None
     thread_id: str  # client must resend this on the next turn
+    # Whether the nota_corrente sent with the request actually reached the
+    # context. False when none was sent, but also when one was sent and
+    # rejected (protected folder, empty note) — the plugin can't work that out
+    # on its own, so it's reported here instead of failing silently.
+    nota_corrente_usata: bool
 
 
 class SyncResponse(BaseModel):
@@ -116,9 +140,18 @@ def chat(req: ChatRequest):
 
     thread_id = req.thread_id or str(uuid.uuid4())
 
+    # model_dump(): the graph state holds plain dicts, not pydantic models —
+    # keeping it a dict means the checkpointer never has to serialize an
+    # API-layer type, and nodes.py stays independent of the HTTP schema.
+    nota_corrente = req.nota_corrente.model_dump() if req.nota_corrente else None
+
     try:
-        risposta, stop_reason = rispondi(
-            query, app.state.grafo_compilato, thread_id, req.modalita_protetta
+        risposta, stop_reason, nota_corrente_usata = rispondi(
+            query,
+            app.state.grafo_compilato,
+            thread_id,
+            req.modalita_protetta,
+            nota_corrente,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Errore nella pipeline: {e}")
@@ -126,7 +159,12 @@ def chat(req: ChatRequest):
     if risposta is None:
         raise HTTPException(status_code=500, detail="Il grafo non ha prodotto una risposta.")
 
-    return ChatResponse(risposta=risposta, stop_reason=stop_reason, thread_id=thread_id)
+    return ChatResponse(
+        risposta=risposta,
+        stop_reason=stop_reason,
+        thread_id=thread_id,
+        nota_corrente_usata=nota_corrente_usata,
+    )
 
 
 # 'def' not 'async def', same reason as /chat: sync_vault() and

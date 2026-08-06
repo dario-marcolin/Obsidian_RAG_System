@@ -18,9 +18,9 @@ from langchain_core.documents import Document
 from query.classifier import classifica_e_estrai
 from retrieval.hybrid_retriever import recupera_per_data
 from retrieval.graph_retriever import espandi_vicini, espandi_vicini_per_frequenza, recupera_chunks_per_note
-from generation.prompts import formatta_contesto, formatta_contesto_sintetico
+from generation.prompts import formatta_contesto, formatta_contesto_sintetico, formatta_contesto_con_nota_corrente
 from generation.llm_client import genera_risposta_claude
-from settings import GRAPH_HOP_LIMIT, CLASSIFIER_MODEL, MAX_RETRY, SOGLIA_FREQUENZA_TEMPORALE, MAX_CHUNK_CONTESTO, GRADING_EXTRACT_CHARS, FINESTRA_TEMPORALE_DEFAULT_GIORNI, FINESTRA_GIORNI_PER_UNITA_GIORNO, FINESTRA_GIORNI_PER_UNITA_SETTIMANA, FINESTRA_GIORNI_PER_UNITA_MESE, FINESTRA_GIORNI_PER_UNITA_ANNO, CARTELLE_PROTETTE
+from settings import GRAPH_HOP_LIMIT, CLASSIFIER_MODEL, MAX_RETRY, SOGLIA_FREQUENZA_TEMPORALE, MAX_CHUNK_CONTESTO, GRADING_EXTRACT_CHARS, FINESTRA_TEMPORALE_DEFAULT_GIORNI, FINESTRA_GIORNI_PER_UNITA_GIORNO, FINESTRA_GIORNI_PER_UNITA_SETTIMANA, FINESTRA_GIORNI_PER_UNITA_MESE, FINESTRA_GIORNI_PER_UNITA_ANNO, CARTELLE_PROTETTE, MAX_CARATTERI_NOTA_CORRENTE
 
 
 # ---------------------------------------------------------------------
@@ -95,6 +95,64 @@ DOMANDA RIFORMULATA:"""
             query_riformulata = query_originale
 
         return {"query_effettiva": query_riformulata}
+
+    return nodo
+
+
+# ---------------------------------------------------------------------
+# Current note (open page as primary context)
+# ---------------------------------------------------------------------
+
+def crea_nodo_nota_corrente():
+    """Validates the note the plugin says is open and turns it into the text
+    that formatta_contesto uses as primary source.
+
+    No dependencies (no vectorstore, no retriever): the plugin already sent
+    the note's text, so there's nothing to retrieve. The factory shape is kept
+    only for consistency with every other node here.
+
+    Three things happen, in this order:
+
+    1. Protected mode wins over the open note. The folder is derived from the
+       vault-relative path with Path(...).parent.name, the same formula
+       ingestion/metadata.py uses to compute the 'cartella' metadata that the
+       rerank filter matches on — so both filters agree on what counts as a
+       protected folder. Without this, a stray click on a note in a private
+       folder during a demo would put it right back into the answer, which is
+       exactly what the shield toggle exists to prevent.
+    2. An empty (or whitespace-only) note is dropped: a brand-new empty page
+       is not context, and announcing it to the model just invites remarks
+       about the emptiness.
+    3. The text is capped at MAX_CARATTERI_NOTA_CORRENTE so one pathological
+       note can't eat the whole prompt. The truncation is announced inline
+       rather than silent, so the model can say the note was cut instead of
+       treating the fragment as the complete note.
+
+    Returns testo_nota_corrente="" in every rejected case; the formatting node
+    keys on that empty string, so there's a single "no current note" signal
+    regardless of the reason.
+    """
+    def nodo(state):
+        nota = state.get("nota_corrente")
+        if not nota:
+            return {"testo_nota_corrente": "", "nome_nota_corrente": ""}
+
+        if state.get("modalita_protetta"):
+            cartella = Path(nota.get("path", "")).parent.name
+            if cartella in CARTELLE_PROTETTE:
+                return {"testo_nota_corrente": "", "nome_nota_corrente": ""}
+
+        testo = (nota.get("contenuto") or "").strip()
+        if not testo:
+            return {"testo_nota_corrente": "", "nome_nota_corrente": ""}
+
+        if len(testo) > MAX_CARATTERI_NOTA_CORRENTE:
+            testo = testo[:MAX_CARATTERI_NOTA_CORRENTE] + "\n\n[...] (nota troncata: troppo lunga)"
+
+        return {
+            "testo_nota_corrente": testo,
+            "nome_nota_corrente": nota.get("nome", "") or Path(nota.get("path", "")).stem,
+        }
 
     return nodo
 
@@ -240,6 +298,13 @@ def crea_nodo_rerank():
     retrieval branch inherits the protection automatically. The filter
     runs before the MAX_CHUNK_CONTESTO cap so the cap applies only to
     chunks that are actually visible.
+
+    Current note: its chunks are dropped here for the same "single
+    chokepoint" reason. The note already enters the context whole, as the
+    primary section, straight from the editor — leaving its indexed chunks
+    in the support section would repeat it, and repeat it in the STALE
+    version ChromaDB happens to hold. Matching is by note name (stem), like
+    everywhere else in this codebase.
     """
     def nodo(state):
         tutti_i_chunk = state.get("chunk_recuperati", []) + state.get("chunk_espansi", [])
@@ -248,6 +313,13 @@ def crea_nodo_rerank():
             tutti_i_chunk = [
                 c for c in tutti_i_chunk
                 if c.metadata.get("cartella") not in CARTELLE_PROTETTE
+            ]
+
+        nome_nota_corrente = state.get("nome_nota_corrente")
+        if nome_nota_corrente:
+            tutti_i_chunk = [
+                c for c in tutti_i_chunk
+                if Path(c.metadata.get("source", "")).stem != nome_nota_corrente
             ]
 
         visti = set()
@@ -268,9 +340,22 @@ def crea_nodo_rerank():
 
 def crea_nodo_formattazione():
     """Explicit formatting step, needed after the CRAG grading cycle (which
-    used to compute this as a side effect) was removed from the graph."""
+    used to compute this as a side effect) was removed from the graph.
+
+    When there's a current note, the context becomes two labelled sections
+    (open note first, retrieved chunks as support) instead of one flat list;
+    testo_nota_corrente being empty is the single signal for "no current
+    note", whatever the reason it was rejected upstream."""
     def nodo(state):
-        contesto = formatta_contesto(state["chunk_rerankati"], is_get_result=False)
+        contesto_recuperato = formatta_contesto(state["chunk_rerankati"], is_get_result=False)
+
+        testo_nota = state.get("testo_nota_corrente", "")
+        if not testo_nota:
+            return {"contesto_formattato": contesto_recuperato}
+
+        contesto = formatta_contesto_con_nota_corrente(
+            state["nome_nota_corrente"], testo_nota, contesto_recuperato
+        )
         return {"contesto_formattato": contesto}
 
     return nodo
@@ -281,12 +366,19 @@ def crea_nodo_formattazione():
 # ---------------------------------------------------------------------
 
 def crea_nodo_generazione():
-    """Thin wrapper around genera_risposta_claude."""
+    """Thin wrapper around genera_risposta_claude.
+
+    ha_nota_corrente adds the source-precedence rule to the system prompt. It's
+    derived from testo_nota_corrente (what actually reached the context) and
+    not from nota_corrente (what the plugin sent): a note rejected by the
+    protected-mode filter or because it was empty must not make the prompt
+    describe a primary section that isn't in the context."""
     def nodo(state):
         risposta, stop_reason = genera_risposta_claude(
             state["query_effettiva"],
             state["contesto_formattato"],
             state["tipo"],
+            ha_nota_corrente=bool(state.get("testo_nota_corrente")),
         )
         return {"risposta": risposta, "stop_reason": stop_reason}
 
