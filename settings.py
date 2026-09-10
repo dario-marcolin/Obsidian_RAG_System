@@ -15,7 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent
 SYNC_STATE_PATH = BASE_DIR / "sync_state.json"
 
 # Obsidian vault folder to index.
-VAULT_PATH = Path("/Users/dariomarcolin/Desktop/Dario's obsidian")
+VAULT_PATH = Path("/Users/dariomarcolin/Library/Mobile Documents/iCloud~md~obsidian/Documents/Dario's obsidian")
 
 # Vault subfolder for personal journal entries, used to auto-filter
 # generic temporal queries (e.g. "what did I write in June?").
