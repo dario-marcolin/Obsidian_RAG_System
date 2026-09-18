@@ -19,3 +19,8 @@ sync_state.json
 
 # OS
 .DS_Store
+
+# Benchmark output (rigenerabile con benchmark_rag_latency.py; i numeri
+# valgono solo per la macchina e il vault su cui è stato lanciato)
+rag_benchmark*.csv
+rag_benchmark*.json
